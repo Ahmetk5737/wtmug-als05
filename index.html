@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Kamera Çevirmeni</title>
+  
+  <!-- PWA Ayarları -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#121212">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3898/3898082.png">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome İkonlar -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Tesseract.js (On-Device OCR) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <style>
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      touch-action: manipulation;
+    }
+    .scan-line {
+      position: absolute;
+      width: 100%;
+      height: 2px;
+      background: #3b82f6;
+      box-shadow: 0 0 15px #3b82f6, 0 0 5px #3b82f6;
+      animation: scan 2s linear infinite;
+    }
+    @keyframes scan {
+      0% { top: 0%; opacity: 0.8; }
+      50% { opacity: 1; }
+      100% { top: 100%; opacity: 0.8; }
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col justify-between overflow-hidden select-none">
+
+  <!-- Üst Bar (Başlık ve Hedef Dil Seçimi) -->
+  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 p-3 z-20 flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+      <i class="fa-solid fa-camera-rotate text-blue-500 text-xl"></i>
+      <h1 class="font-bold text-lg tracking-wide text-white">Kamera Çevirmeni</h1>
+    </div>
+
+    <!-- Hedef Dil Seçimi -->
+    <div class="flex items-center space-x-1 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
+      <span class="text-xs text-slate-400">Hedef:</span>
+      <select id="targetLang" class="bg-transparent text-sm font-semibold text-blue-400 focus:outline-none cursor-pointer">
+        <option value="tr" selected class="bg-slate-900 text-white">Türkçe</option>
+        <option value="en" class="bg-slate-900 text-white">İngilizce</option>
+        <option value="de" class="bg-slate-900 text-white">Almanca</option>
+        <option value="fr" class="bg-slate-900 text-white">Fransızca</option>
+        <option value="es" class="bg-slate-900 text-white">İspanyolca</option>
+        <option value="it" class="bg-slate-900 text-white">İtalyanca</option>
+        <option value="ru" class="bg-slate-900 text-white">Rusça</option>
+        <option value="ar" class="bg-slate-900 text-white">Arapça</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- Ana İçerik Alanı -->
+  <main class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+    
+    <!-- Kamera Görüntüsü -->
+    <video id="video" autoplay playsinline class="w-full h-full object-cover"></video>
+    
+    <!-- Galeriden veya Manuel Yüklenen Görsel Önizlemesi -->
+    <img id="imagePreview" class="hidden w-full h-full object-contain bg-black" />
+
+    <!-- Kamera Çerçevesi / HUD -->
+    <div id="hud" class="absolute inset-8 border-2 border-dashed border-blue-500/50 rounded-2xl pointer-events-none flex items-center justify-center">
+      <div id="scanLine" class="scan-line hidden"></div>
+      <p id="hudText" class="text-xs text-blue-300/70 bg-black/40 px-3 py-1 rounded-full backdrop-blur">
+        Yazıyı çerçeve içine getirin
+      </p>
+    </div>
+
+    <!-- Yükleniyor / İşleniyor Overlay -->
+    <div id="loadingOverlay" class="hidden absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center z-30">
+      <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+      <p id="loadingStatus" class="text-sm font-medium text-slate-200">Görüntü taranıyor (OCR)...</p>
+      <span class="text-xs text-slate-400 mt-1">Bu işlem cihaz üzerinde yapılır</span>
+    </div>
+
+    <!-- Manuel Metin Girişi Modalı -->
+    <div id="manualInputModal" class="hidden absolute inset-0 bg-slate-950/90 backdrop-blur-md z-30 p-4 flex flex-col justify-center">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col space-y-3">
+        <div class="flex justify-between items-center">
+          <h3 class="font-semibold text-slate-200">Manuel Metin Girin</h3>
+          <button id="closeManualBtn" class="text-slate-400 hover:text-white">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+        <textarea id="manualText" rows="4" placeholder="Okunamayan metni buraya yazın..." class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-200 focus:outline-none focus:border-blue-500 resize-none"></textarea>
+        <button id="translateManualBtn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg text-sm transition">
+          Çevir
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Alt Çeviri Sonuç Paneli -->
+  <section id="resultSection" class="bg-slate-900 border-t border-slate-800 p-4 z-20 flex flex-col space-y-3 max-h-[45vh] overflow-y-auto custom-scrollbar">
+    
+    <!-- Algılanan Kaynak Dil ve Orijinal Metin -->
+    <div class="flex flex-col space-y-1">
+      <div class="flex items-center justify-between">
+        <span id="detectedLangTag" class="text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-400 px-2 py-0.5 rounded">
+          Algılanan Dil: --
+        </span>
+        <button id="speakBtn" class="text-slate-400 hover:text-blue-400 text-sm hidden">
+          <i class="fa-solid fa-volume-high"></i> Dinle
+        </button>
+      </div>
+      <p id="originalText" class="text-xs text-slate-400 italic min-h-[1.25rem] italic">
+        Çeviri yapmak için fotoğraf çekin veya galeri kullanın.
+      </p>
+    </div>
+
+    <hr class="border-slate-800">
+
+    <!-- Çevrilmiş Metin -->
+    <div class="flex flex-col space-y-1">
+      <span class="text-[10px] font-bold uppercase tracking-wider text-blue-400">Çeviri</span>
+      <p id="translatedText" class="text-sm font-medium text-slate-100 min-h-[2rem]">
+        ---
+      </p>
+    </div>
+  </section>
+
+  <!-- Alt Kontrol Butonları -->
+  <footer class="bg-slate-950 p-4 border-t border-slate-800/80 z-20 flex items-center justify-around">
+    
+    <!-- Galeri Yükleme -->
+    <label class="flex flex-col items-center justify-center text-slate-400 hover:text-white cursor-pointer space-y-1">
+      <i class="fa-solid fa-image text-xl"></i>
+      <span class="text-[10px]">Galeri</span>
+      <input type="file" id="galleryInput" accept="image/*" class="hidden">
+    </label>
+
+    <!-- Yakala ve Çevir Butonu -->
+    <button id="captureBtn" class="w-14 h-14 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-600/30 active:scale-95 transition">
+      <i class="fa-solid fa-camera text-xl"></i>
+    </button>
+
+    <!-- Klavyeyle Giriş -->
+    <button id="openManualBtn" class="flex flex-col items-center justify-center text-slate-400 hover:text-white space-y-1">
+      <i class="fa-solid fa-keyboard text-xl"></i>
+      <span class="text-[10px]">Klavye</span>
+    </button>
+  </footer>
+
+  <!-- Canvas (Fotoğrafı İşlemek İçin Gizli) -->
+  <canvas id="canvas" class="hidden"></canvas>
+
+  <script>
+    // PWA Service Worker Kaydı
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW Hata:', err));
+      });
+    }
+
+    // DOM Elemanları
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const imagePreview = document.getElementById('imagePreview');
+    const captureBtn = document.getElementById('captureBtn');
+    const galleryInput = document.getElementById('galleryInput');
+    const targetLangSelect = document.getElementById('targetLang');
+    const originalTextElem = document.getElementById('originalText');
+    const translatedTextElem = document.getElementById('translatedText');
+    const detectedLangTag = document.getElementById('detectedLangTag');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingStatus = document.getElementById('loadingStatus');
+    const scanLine = document.getElementById('scanLine');
+    const speakBtn = document.getElementById('speakBtn');
+
+    // Manuel Giriş Modal Elemanları
+    const openManualBtn = document.getElementById('openManualBtn');
+    const closeManualBtn = document.getElementById('closeManualBtn');
+    const manualInputModal = document.getElementById('manualInputModal');
+    const manualText = document.getElementById('manualText');
+    const translateManualBtn = document.getElementById('translateManualBtn');
+
+    let stream = null;
+
+    // Kamerayı Başlat (Android Pixel 7 & Mobil Uyumlu)
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+        video.srcObject = stream;
+      } catch (err) {
+        console.error("Kamera erişim hatası:", err);
+        originalTextElem.innerText = "Kamera erişimi sağlanamadı. Galeriyi veya klavyeyi kullanabilirsiniz.";
+      }
+    }
+
+    // Kamera Görüntüsünden Kare Yakala
+    function captureFrame() {
+      if (!video.srcObject) return null;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    }
+
+    // On-Device OCR İşlemi (Tesseract.js)
+    async function performOCR(imageSrc) {
+      showLoading("Görüntüdeki yazılar okunuyor...");
+      try {
+        const worker = await Tesseract.createWorker('eng+tur'); // İngilizce ve Türkçe varsayılan OCR
+        const ret = await worker.recognize(imageSrc);
+        await worker.terminate();
+        
+        const extractedText = ret.data.text.trim();
+        if (!extractedText) {
+          hideLoading();
+          alert("Görselde okunabilir bir metin bulunamadı.");
+          return;
+        }
+
+        originalTextElem.innerText = extractedText;
+        await translateText(extractedText);
+      } catch (err) {
+        console.error("OCR Hatalı:", err);
+        alert("Metin okunurken bir hata oluştu.");
+      } finally {
+        hideLoading();
+      }
+    }
+
+    // Ücretsiz Çeviri Servisi Entegrasyonu (MyMemory & Lingva Fallback)
+    async function translateText(text) {
+      const targetLang = targetLangSelect.value;
+      showLoading("Dil algılanıyor ve çevriliyor...");
+
+      try {
+        // MyMemory Free API Endpoint (API Key Gerektirmez)
+        // autodetect için langpair = 'autodetect|targetLang'
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=autodetect|${targetLang}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data && data.responseData) {
+          translatedTextElem.innerText = data.responseData.translatedText;
+          
+          // Algılanan Dil Bilgisi
+          const detected = data.responseData.match || 'Otomatik';
+          detectedLangTag.innerText = `ALGILANAN DİL: ${data.matches[0]?.segment || 'OTOMATİK'}`;
+          speakBtn.classList.remove('hidden');
+        } else {
+          translatedTextElem.innerText = "Çeviri yapılamadı.";
+        }
+      } catch (err) {
+        console.error("Çeviri Servisi Hatası:", err);
+        translatedTextElem.innerText = "Çeviri servisine ulaşılamadı. İnternet bağlantınızı kontrol edin.";
+      } finally {
+        hideLoading();
+      }
+    }
+
+    // Arayüz Yardımcı Fonksiyonları
+    function showLoading(msg) {
+      loadingStatus.innerText = msg;
+      loadingOverlay.classList.remove('hidden');
+      scanLine.classList.remove('hidden');
+    }
+
+    function hideLoading() {
+      loadingOverlay.classList.add('hidden');
+      scanLine.classList.add('hidden');
+    }
+
+    // Etkinlik Dinleyicileri (Event Listeners)
+    captureBtn.addEventListener('click', () => {
+      const imageData = captureFrame();
+      if (imageData) {
+        performOCR(imageData);
+      }
+    });
+
+    galleryInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          imagePreview.src = event.target.result;
+          imagePreview.classList.remove('hidden');
+          video.classList.add('hidden');
+          performOCR(event.target.result);
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // Manuel Metin Girişi Modal
+    openManualBtn.addEventListener('click', () => manualInputModal.classList.remove('hidden'));
+    closeManualBtn.addEventListener('click', () => manualInputModal.classList.add('hidden'));
+    
+    translateManualBtn.addEventListener('click', () => {
+      const text = manualText.value.trim();
+      if (text) {
+        manualInputModal.classList.add('hidden');
+        originalTextElem.innerText = text;
+        translateText(text);
+      }
+    });
+
+    // Sesli Okuma (Text-to-Speech)
+    speakBtn.addEventListener('click', () => {
+      const text = translatedTextElem.innerText;
+      if ('speechSynthesis' in window && text) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = targetLangSelect.value;
+        window.speechSynthesis.speak(utterance);
+      }
+    });
+
+    // Sayfa Yüklendiğinde Kamerayı Başlat
+    window.addEventListener('DOMContentLoaded', startCamera);
+  </script>
+</body>
+</html>
