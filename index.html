@@ -81,22 +81,22 @@
     <!-- Kamera Görüntüsü -->
     <video id="video" autoplay playsinline class="w-full h-full object-cover"></video>
     
-    <!-- Galeriden veya Manuel Yüklenen Görsel Önizlemesi -->
+    <!-- Galeriden Yüklenen Görsel Önizlemesi -->
     <img id="imagePreview" class="hidden w-full h-full object-contain bg-black" />
 
     <!-- Kamera Çerçevesi / HUD -->
     <div id="hud" class="absolute inset-8 border-2 border-dashed border-blue-500/50 rounded-2xl pointer-events-none flex items-center justify-center">
       <div id="scanLine" class="scan-line hidden"></div>
       <p id="hudText" class="text-xs text-blue-300/70 bg-black/40 px-3 py-1 rounded-full backdrop-blur">
-        Yazıyı çerçeve içine getirin
+        Yazıyı odaklayıp netleştirin
       </p>
     </div>
 
     <!-- Yükleniyor / İşleniyor Overlay -->
     <div id="loadingOverlay" class="hidden absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center z-30">
       <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-      <p id="loadingStatus" class="text-sm font-medium text-slate-200">Görüntü taranıyor (OCR)...</p>
-      <span class="text-xs text-slate-400 mt-1">Bu işlem cihaz üzerinde yapılır</span>
+      <p id="loadingStatus" class="text-sm font-medium text-slate-200">Görüntü netleştiriliyor ve taranıyor...</p>
+      <span class="text-xs text-slate-400 mt-1">Cihaz içi OCR optimizasyonu aktif</span>
     </div>
 
     <!-- Manuel Metin Girişi Modalı -->
@@ -129,8 +129,8 @@
           <i class="fa-solid fa-volume-high"></i> Dinle
         </button>
       </div>
-      <p id="originalText" class="text-xs text-slate-400 italic min-h-[1.25rem] italic">
-        Çeviri yapmak için fotoğraf çekin veya galeri kullanın.
+      <p id="originalText" class="text-xs text-slate-400 italic min-h-[1.25rem]">
+        Çeviri yapmak için kamerayı yazının üzerine tutup butona basın.
       </p>
     </div>
 
@@ -167,18 +167,17 @@
     </button>
   </footer>
 
-  <!-- Canvas (Fotoğrafı İşlemek İçin Gizli) -->
+  <!-- Canvas (İşlem İçin Gizli) -->
   <canvas id="canvas" class="hidden"></canvas>
 
   <script>
-    // PWA Service Worker Kaydı
+    // Service Worker Kaydı
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW Hata:', err));
       });
     }
 
-    // DOM Elemanları
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const imagePreview = document.getElementById('imagePreview');
@@ -193,95 +192,128 @@
     const scanLine = document.getElementById('scanLine');
     const speakBtn = document.getElementById('speakBtn');
 
-    // Manuel Giriş Modal Elemanları
     const openManualBtn = document.getElementById('openManualBtn');
     const closeManualBtn = document.getElementById('closeManualBtn');
     const manualInputModal = document.getElementById('manualInputModal');
     const manualText = document.getElementById('manualText');
     const translateManualBtn = document.getElementById('translateManualBtn');
 
-    let stream = null;
-
-    // Kamerayı Başlat (Android Pixel 7 & Mobil Uyumlu)
+    // Kamera Başlatma
     async function startCamera() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: 'environment', 
+            width: { ideal: 1920 }, 
+            height: { ideal: 1080 } 
+          },
           audio: false
         });
         video.srcObject = stream;
       } catch (err) {
-        console.error("Kamera erişim hatası:", err);
-        originalTextElem.innerText = "Kamera erişimi sağlanamadı. Galeriyi veya klavyeyi kullanabilirsiniz.";
+        console.error("Kamera hatası:", err);
+        originalTextElem.innerText = "Kamera açılamadı. Galeriden fotoğraf seçebilir veya klavye butonuna basabilirsiniz.";
       }
     }
 
-    // Kamera Görüntüsünden Kare Yakala
-    function captureFrame() {
-      if (!video.srcObject) return null;
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/png');
+    // Görüntü Ön İşleme (Kontrast Artırma ve Siyah-Beyaz Yapma)
+    function preprocessImage(inputCanvas) {
+      const ctx = inputCanvas.getContext('2d');
+      const imgData = ctx.getImageData(0, 0, inputCanvas.width, inputCanvas.height);
+      const data = imgData.data;
+
+      // Siyah-Beyaz Dönüştürme & Kontrast Eşiği
+      for (let i = 0; i < data.length; i += 4) {
+        const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        // Kontrast eşikleme (Thresholding)
+        const v = avg > 110 ? 255 : 0;
+        data[i] = v;     // R
+        data[i + 1] = v; // G
+        data[i + 2] = v; // B
+      }
+      ctx.putImageData(imgData, 0, 0);
+      return inputCanvas.toDataURL('image/png');
     }
 
-    // On-Device OCR İşlemi (Tesseract.js)
+    // Kare Yakalama
+    function captureFrame() {
+      if (!video.srcObject) return null;
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return preprocessImage(canvas);
+    }
+
+    // OCR Metin Temizliği (Gürültü ve Sembol Filtresi)
+    function cleanText(rawText) {
+      return rawText
+        // Sadece harfler, rakamlar, boşluklar ve temel noktalama işaretlerini tut
+        .replace(/[^a-zA-Z0-9-çğıöşüÇĞİÖŞÜ\s.,!?'"]/g, '')
+        // Tekrarlanan anlamsız boşlukları düzenle
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // On-Device OCR (Tesseract.js)
     async function performOCR(imageSrc) {
-      showLoading("Görüntüdeki yazılar okunuyor...");
+      showLoading("Görüntüdeki yazılar işleniyor...");
       try {
-        const worker = await Tesseract.createWorker('eng+tur'); // İngilizce ve Türkçe varsayılan OCR
+        const worker = await Tesseract.createWorker('eng+tur');
+        
+        // Tesseract Kontrol Parametreleri (Gürültü Engelleme)
+        await worker.setParameters({
+          tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+        });
+
         const ret = await worker.recognize(imageSrc);
         await worker.terminate();
-        
-        const extractedText = ret.data.text.trim();
-        if (!extractedText) {
+
+        const cleaned = cleanText(ret.data.text);
+
+        if (!cleaned || cleaned.length < 2) {
           hideLoading();
-          alert("Görselde okunabilir bir metin bulunamadı.");
+          alert("Görselde net bir metin okunamadı. Lütfen kamerayı daha yakından tutun veya odağı ayarlayın.");
           return;
         }
 
-        originalTextElem.innerText = extractedText;
-        await translateText(extractedText);
+        originalTextElem.innerText = cleaned;
+        await translateText(cleaned);
       } catch (err) {
-        console.error("OCR Hatalı:", err);
-        alert("Metin okunurken bir hata oluştu.");
+        console.error("OCR Hatası:", err);
+        alert("Metin okunurken hata oluştu. Lütfen tekrar deneyin.");
       } finally {
         hideLoading();
       }
     }
 
-    // Ücretsiz Çeviri Servisi Entegrasyonu (MyMemory & Lingva Fallback)
+    // Ücretsiz Çeviri Servisi
     async function translateText(text) {
       const targetLang = targetLangSelect.value;
-      showLoading("Dil algılanıyor ve çevriliyor...");
+      showLoading("Metin çevriliyor...");
 
       try {
-        // MyMemory Free API Endpoint (API Key Gerektirmez)
-        // autodetect için langpair = 'autodetect|targetLang'
         const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=autodetect|${targetLang}`;
         const response = await fetch(url);
         const data = await response.json();
 
-        if (data && data.responseData) {
+        if (data && data.responseData && data.responseData.translatedText) {
           translatedTextElem.innerText = data.responseData.translatedText;
           
-          // Algılanan Dil Bilgisi
-          const detected = data.responseData.match || 'Otomatik';
-          detectedLangTag.innerText = `ALGILANAN DİL: ${data.matches[0]?.segment || 'OTOMATİK'}`;
+          const matchLang = data.matches && data.matches[0] ? data.matches[0].segment : 'OTOMATİK';
+          detectedLangTag.innerText = `ALGILANAN DİL: ${matchLang}`;
           speakBtn.classList.remove('hidden');
         } else {
           translatedTextElem.innerText = "Çeviri yapılamadı.";
         }
       } catch (err) {
-        console.error("Çeviri Servisi Hatası:", err);
-        translatedTextElem.innerText = "Çeviri servisine ulaşılamadı. İnternet bağlantınızı kontrol edin.";
+        console.error("Çeviri Hatası:", err);
+        translatedTextElem.innerText = "Çeviri servisine ulaşılamadı. Bağlantınızı kontrol edin.";
       } finally {
         hideLoading();
       }
     }
 
-    // Arayüz Yardımcı Fonksiyonları
     function showLoading(msg) {
       loadingStatus.innerText = msg;
       loadingOverlay.classList.remove('hidden');
@@ -293,12 +325,10 @@
       scanLine.classList.add('hidden');
     }
 
-    // Etkinlik Dinleyicileri (Event Listeners)
+    // Dinleyiciler
     captureBtn.addEventListener('click', () => {
       const imageData = captureFrame();
-      if (imageData) {
-        performOCR(imageData);
-      }
+      if (imageData) performOCR(imageData);
     });
 
     galleryInput.addEventListener('change', (e) => {
@@ -309,16 +339,26 @@
           imagePreview.src = event.target.result;
           imagePreview.classList.remove('hidden');
           video.classList.add('hidden');
-          performOCR(event.target.result);
+
+          // Ön izleme canvas'a çizilip işlenir
+          const img = new Image();
+          img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const processedImg = preprocessImage(canvas);
+            performOCR(processedImg);
+          };
+          img.src = event.target.result;
         };
         reader.readAsDataURL(file);
       }
     });
 
-    // Manuel Metin Girişi Modal
     openManualBtn.addEventListener('click', () => manualInputModal.classList.remove('hidden'));
     closeManualBtn.addEventListener('click', () => manualInputModal.classList.add('hidden'));
-    
+
     translateManualBtn.addEventListener('click', () => {
       const text = manualText.value.trim();
       if (text) {
@@ -328,7 +368,6 @@
       }
     });
 
-    // Sesli Okuma (Text-to-Speech)
     speakBtn.addEventListener('click', () => {
       const text = translatedTextElem.innerText;
       if ('speechSynthesis' in window && text) {
@@ -338,7 +377,6 @@
       }
     });
 
-    // Sayfa Yüklendiğinde Kamerayı Başlat
     window.addEventListener('DOMContentLoaded', startCamera);
   </script>
 </body>
